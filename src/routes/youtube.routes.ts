@@ -11,6 +11,13 @@ const router = Router();
 router.post('/download', YouTubeController.download);
 
 /**
+ * @route POST /api/advanced-download
+ * @desc Faz download com verificação de tamanho e envia para bucket do usuário
+ * @access Public
+ */
+router.post('/advanced-download', YouTubeController.advancedDownload);
+
+/**
  * @route GET /api/info
  * @desc Lista todos os arquivos no bucket
  * @access Public

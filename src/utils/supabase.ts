@@ -74,6 +74,32 @@ export const uploadFile = async (fileName: string, fileData: Buffer): Promise<vo
 };
 
 /**
+ * Faz upload de um arquivo para um bucket personalizado do usuário no Supabase Storage
+ */
+export const uploadToUserBucket = async (
+  fileName: string, 
+  fileData: Buffer, 
+  userId: string, 
+  itemId: string
+): Promise<void> => {
+  const uploadUrl = `${config.supabase.url}/storage/v1/object/mp3/${userId}/${itemId}/${fileName}`;
+
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'audio/mpeg',
+      'Authorization': `Bearer ${config.supabase.token}`
+    },
+    body: fileData
+  });
+
+  if (!response.ok) {
+    const errorResponse = await response.json();
+    throw new Error(`Erro no upload: ${JSON.stringify(errorResponse)}`);
+  }
+};
+
+/**
  * Gera um nome de arquivo baseado nas informações do vídeo
  */
 export const generateFileName = (fileInfo: FileInfo): string => {
