@@ -1,0 +1,154 @@
+const ytdl = require('ytdl-core');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
+const http = require('http');
+const NodeID3 = require('node-id3');
+
+
+const server = http.createServer(async (req, res) => {
+  if (req.url.startsWith('/download/') && req.method === 'GET') {
+    try {
+      const [videoId, userId, itemId] = req.url.split('/').slice(2);
+      
+      if (!videoId || !userId || !itemId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ 
+          error: 'Os parâmetros videoId, userId e itemId são obrigatórios' 
+        }));
+      }
+
+      // Verificar se o videoId é válido
+      if (!ytdl.validateID(videoId)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'ID do vídeo inválido' }));
+      }
+
+      const url = `https://www.youtube.com/watch?v=${videoId}`;
+      const fileName = `${uuidv4()}.mp3`;
+
+      console.log(`Usuário ${userId} está baixando o item ${itemId}`);
+
+      // Verificar se o vídeo existe
+      const info = await ytdl.getInfo(url).catch(err => {
+        if (err.message.includes('Video unavailable')) {
+          throw new Error('Vídeo não encontrado no YouTube');
+        }
+        throw err;
+      });
+
+      // Calcular tamanho estimado do MP3
+      const duration = parseInt(info.videoDetails.lengthSeconds);
+      const bitrate = 128; // 128 kbps (bitrate comum para MP3)
+      const sizeInMB = ((bitrate * duration) / 8) / 1024; // Tamanho em MB
+      
+      if (sizeInMB > 40) { // Limite de 40MB
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ 
+          error: 'Arquivo muito grande',
+          size: `${sizeInMB.toFixed(2)} MB`,
+          maxSize: '40 MB'
+        }));
+      }
+
+      console.log(`Tamanho estimado do MP3: ${sizeInMB.toFixed(2)} MB`);
+
+      const videoTitle = info.videoDetails.title;
+      console.log(`Título do vídeo: ${videoTitle}`);
+
+      const stream = ytdl(url, {
+        filter: 'audioonly',
+        format: 'mp3',
+      });
+
+      stream.on('error', (error) => {
+        console.error('Erro ao baixar o vídeo:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Erro ao baixar o vídeo' }));
+      });
+
+      const token = ''; // Substitua pelo seu token
+
+      stream.pipe(fs.createWriteStream(fileName))
+        .on('finish', () => {
+          // Adicionar metadados ao arquivo MP3
+          const tags = {
+            title: videoTitle,
+            artist: info.videoDetails.author.name,
+            album: 'YouTube Download',
+            year: new Date(info.videoDetails.uploadDate).getFullYear().toString(),
+            comment: {
+              language: 'eng',
+              text: `User: ${userId}, Item: ${itemId}`
+            }
+          };
+          
+          NodeID3.write(tags, fileName, async (err) => {
+            if (err) {
+              console.error('Erro ao adicionar metadados:', err);
+            } else {
+              console.log('Metadados adicionados com sucesso!');
+              
+              // Ler e imprimir os metadados do arquivo
+              const readTags = NodeID3.read(fileName);
+              console.log('Metadados do arquivo:');
+              console.log('Título:', readTags.title);
+              console.log('Artista:', readTags.artist);
+              console.log('Álbum:', readTags.album);
+              console.log('Ano:', readTags.year);
+
+              try {
+                // Ler o arquivo MP3
+                const fileData = fs.readFileSync(fileName);
+                
+                // Fazer upload para o Supabase Storage
+                const uploadUrl = `https://kgwnnqbpohhldfroogmm.supabase.co/storage/v1/object/mp3/${userId}/${itemId}/${fileName}`;
+                
+                const response = await fetch(uploadUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'audio/mpeg',
+                    'Authorization': `Bearer ${token}`
+                  },
+                  body: fileData
+                });
+
+                if (!response.ok) {
+                  throw new Error(`Erro no upload: ${response.statusText}`);
+                }
+
+                console.log('Arquivo enviado com sucesso para o Supabase Storage');
+              } catch (uploadError) {
+                console.error('Erro ao fazer upload do arquivo:', uploadError);
+              }
+            }
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              message: 'Download concluído com sucesso',
+              fileName: fileName,
+              userId: userId,
+              itemId: itemId
+            }));
+          });
+        })
+        .on('error', (error) => {
+          console.error('Erro ao salvar o arquivo:', error);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Erro ao salvar o arquivo' }));
+        });
+
+    } catch (error) {
+      console.error('Erro no servidor:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Erro interno do servidor' }));
+    }
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Rota não encontrada' }));
+  }
+});
+
+const PORT = process.env.PORT || 3003;
+server.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
